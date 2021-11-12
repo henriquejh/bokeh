@@ -2,6 +2,11 @@ name: Docker image - Build
 
 on:
   workflow_dispatch:
+    inputs:
+      run_tests:
+        description: 'Run tests (0 or 1)'
+        required: true
+        default: '0'
 
 jobs:
   docker_build:
@@ -31,3 +36,14 @@ jobs:
         uses: actions/upload-artifact@v2
         with:
           path: bokeh-dev.tar
+
+      - name: Checkout source
+        if: ${{ github.event.inputs.run_tests }}
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Run tests
+        if: ${{ github.event.inputs.run_tests }}
+        run: |
+          docker run -v bokeh:/bokeh --rm -e BOKEH_DOCKER_BUILD=1 bokeh-dev:latest
