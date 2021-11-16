@@ -1,11 +1,11 @@
-import {RowSelectionModel} from "@bokeh/slickgrid/plugins/slick.rowselectionmodel"
+import {CellSelectionModel} from "@bokeh/slickgrid/plugins/slick.cellselectionmodel"
 import {CheckboxSelectColumn} from "@bokeh/slickgrid/plugins/slick.checkboxselectcolumn"
 import {CellExternalCopyManager} from "@bokeh/slickgrid/plugins/slick.cellexternalcopymanager"
 
 import {Grid as SlickGrid, DataProvider, SortColumn, OnSortEventArgs, OnSelectedRowsChangedEventArgs} from "@bokeh/slickgrid"
 import * as p from "core/properties"
 import {uniqueId} from "core/util/string"
-import {isString, isNumber} from "core/util/types"
+import {isString, isNumber, is_defined} from "core/util/types"
 import {some, range} from "core/util/array"
 import {keys} from "core/util/object"
 import {logger} from "core/logging"
@@ -16,7 +16,8 @@ import {ColumnType, Item, DTINDEX_NAME} from "./definitions"
 import {TableWidget} from "./table_widget"
 import {TableColumn} from "./table_column"
 import {ColumnDataSource} from "../../sources/column_data_source"
-import {CDSView} from "../../sources/cds_view"
+import {CDSView, CDSViewView} from "../../sources/cds_view"
+import {build_view} from "core/build_views"
 
 import tables_css, * as tables from "styles/widgets/tables.css"
 import slickgrid_css from "styles/widgets/slickgrid.css"
@@ -83,10 +84,8 @@ export class TableDataProvider implements DataProvider<Item> {
     return this.getRecords()
   }
 
-  slice(start: number, end: number | null, step?: number): Item[] {
-    start = start ?? 0
+  slice(start: number, end: number | null, step: number = 1): Item[] {
     end = end ?? this.getLength()
-    step = step ?? 1
     return range(start, end, step).map((i) => this.getItem(i))
   }
 
@@ -117,7 +116,9 @@ export class TableDataProvider implements DataProvider<Item> {
 }
 
 export class DataTableView extends WidgetView {
-  model: DataTable
+  override model: DataTable
+
+  protected cds_view: CDSViewView
 
   protected data: TableDataProvider
   protected grid: SlickGrid<Item>
@@ -125,7 +126,22 @@ export class DataTableView extends WidgetView {
   protected _in_selection_update = false
   protected _width: number | null = null
 
-  connect_signals(): void {
+  get data_source(): p.Property<ColumnDataSource> {
+    return this.model.properties.source
+  }
+
+  override async lazy_initialize(): Promise<void> {
+    await super.lazy_initialize()
+    this.cds_view = await build_view(this.model.view, {parent: this})
+  }
+
+  override remove(): void {
+    this.cds_view.remove()
+    this.grid.destroy()
+    super.remove()
+  }
+
+  override connect_signals(): void {
     super.connect_signals()
     this.connect(this.model.change, () => this.render())
 
@@ -136,28 +152,30 @@ export class DataTableView extends WidgetView {
 
     this.connect(this.model.source.selected.change, () => this.updateSelection())
     this.connect(this.model.source.selected.properties.indices.change, () => this.updateSelection())
+
+    for (const column of this.model.columns) {
+      this.connect(column.change, () => {
+        this.invalidate_layout()
+        this.render()
+      })
+    }
   }
 
-  remove(): void {
-    this.grid?.destroy()
-    super.remove()
-  }
-
-  styles(): string[] {
+  override styles(): string[] {
     return [...super.styles(), slickgrid_css, tables_css]
   }
 
-  update_position(): void {
+  override update_position(): void {
     super.update_position()
     this.grid.resizeCanvas()
   }
 
-  after_layout(): void {
+  override after_layout(): void {
     super.after_layout()
     this.updateLayout(true, false)
   }
 
-  box_sizing(): Partial<BoxSizing> {
+  override box_sizing(): Partial<BoxSizing> {
     const sizing = super.box_sizing()
     if (this.model.autosize_mode === "fit_viewport" && this._width != null)
       sizing.width = this._width
@@ -179,7 +197,7 @@ export class DataTableView extends WidgetView {
     // before passing to the DataProvider. This will result in extra calls to
     // compute_indices. This "over execution" will be addressed in a more
     // general look at events
-    this.model.view.compute_indices()
+    this.cds_view.compute_indices()
     this.data.init(this.model.source, this.model.view)
 
     // This is obnoxious but there is no better way to programmatically force
@@ -238,7 +256,7 @@ export class DataTableView extends WidgetView {
     }
   }
 
-  css_classes(): string[] {
+  override css_classes(): string[] {
     return super.css_classes().concat(tables.data_table)
   }
 
@@ -253,8 +271,8 @@ export class DataTableView extends WidgetView {
     return autosize
   }
 
-  render(): void {
-    const columns: ColumnType[] = this.model.columns.map((column) => {
+  override render(): void {
+    const columns: ColumnType[] = this.model.columns.filter((column) => column.visible).map((column) => {
       return {...column.toColumn(), parent: this}
     })
 
@@ -279,7 +297,7 @@ export class DataTableView extends WidgetView {
 
     let {reorderable} = this.model
 
-    if (reorderable && !(typeof $ !== "undefined" && $.fn != null && ($.fn as any).sortable != null)) {
+    if (reorderable && !(typeof $ != "undefined" && typeof $.fn != "undefined" && "sortable" in $.fn)) {
       if (!_warned_not_reorderable) {
         logger.warn("jquery-ui is required to enable DataTable.reorderable")
         _warned_not_reorderable = true
@@ -310,7 +328,7 @@ export class DataTableView extends WidgetView {
       frozenBottom: frozen_bottom,
     }
 
-    const initialized = this.grid != null
+    const initialized = is_defined(this.grid)
 
     this.data = new TableDataProvider(this.model.source, this.model.view)
     this.grid = new SlickGrid(this.el, this.data, columns, options)
@@ -340,7 +358,7 @@ export class DataTableView extends WidgetView {
     })
 
     if (this.model.selectable !== false) {
-      this.grid.setSelectionModel(new RowSelectionModel({selectActiveRow: checkbox_selector == null}))
+      this.grid.setSelectionModel(new CellSelectionModel());
       if (checkbox_selector != null)
         this.grid.registerPlugin(checkbox_selector)
 
@@ -410,8 +428,8 @@ export namespace DataTable {
 export interface DataTable extends DataTable.Attrs {}
 
 export class DataTable extends TableWidget {
-  properties: DataTable.Props
-  __view_type__: DataTableView
+  override properties: DataTable.Props
+  override __view_type__: DataTableView
 
   private _sort_columns: {field: string, sortAsc: boolean}[] = []
   get sort_columns(): {field: string, sortAsc: boolean}[] {
@@ -422,7 +440,7 @@ export class DataTable extends TableWidget {
     super(attrs)
   }
 
-  static init_DataTable(): void {
+  static {
     this.prototype.default_view = DataTableView
 
     this.define<DataTable.Props>(({Array, Boolean, Int, Ref, String, Enum, Or, Nullable}) => ({
