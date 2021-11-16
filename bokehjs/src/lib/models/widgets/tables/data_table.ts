@@ -1,4 +1,4 @@
-import {RowSelectionModel} from "@bokeh/slickgrid/plugins/slick.rowselectionmodel"
+import {CellSelectionModel} from "@bokeh/slickgrid/plugins/slick.cellselectionmodel"
 import {CheckboxSelectColumn} from "@bokeh/slickgrid/plugins/slick.checkboxselectcolumn"
 import {CellExternalCopyManager} from "@bokeh/slickgrid/plugins/slick.cellexternalcopymanager"
 
@@ -358,7 +358,7 @@ export class DataTableView extends WidgetView {
     })
 
     if (this.model.selectable !== false) {
-      this.grid.setSelectionModel(new RowSelectionModel({selectActiveRow: checkbox_selector == null}))
+      this.grid.setSelectionModel(new CellSelectionModel());
       if (checkbox_selector != null)
         this.grid.registerPlugin(checkbox_selector)
 
